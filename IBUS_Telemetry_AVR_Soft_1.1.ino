@@ -1,10 +1,22 @@
-//#define VERSION "IBUS Telemetry V1.1 20251018 Arduino Pro Mini ATMEGA328 Mini 3.3V 8MHz, BMe/BMP280 3.3V NEO-6M-7M-GPS 5V"
-#define VERSION "IBUS Telemetry V1.1 20251018 Arduino Nano ATMEGA328 Mini 5V 16MHz, BMe/BMP280 3.3V NEO-6M-7M-GPS 5V"
-#include "iBUSTelemetry.h"
+/*IBUS Combo sensor based on NEO GPS, BPS280 sensor and Arduino AVR Atmega328P module by Aimeiz 2025/10
+ * Based on IBUSTelemetry library by adis1313 https://github.com/SoluTekSteam/75_IbusTelemetry_adis1313_iBUSTelemetry-Arduino
+ * GPS and debug / upload serial port is shared, so assure jumper to disconnect GPS Tx pin from Arduino RX0 pin to upload code
+ * DBUG Serial printous are activated by setting DEBUG_PIN to LOW state. Disable DEBUG for normal opiretion. 
+ * Pullup I2C SDA, SCL lines by 4.7k resistors.
+ * Install >= 1000uF/ 6.3V Low ESR capacitor on 5V supply I used 4700uF / 6.3V, and 0.1uF also, to block interferences.
+ * 
+ * Current version doesn't display GPS data properly on Flysky I6X transmitter due to old data format, but works well on EdgeTX (RADIOMASTER TX16S
+ * See attached GpsInfo widget for EdgeTX 
+ */
+ 
+#define VERSION "IBUS Telemetry V1.1 20251018 Arduino Pro Mini ATMEGA328 Mini 5V 16MHz, BMe/BMP280 5VV NEO-6M-7M-GPS 5V"
+//#define VERSION "IBUS Telemetry V1.1 20251018 Arduino Nano ATMEGA328 Mini 5V 16MHz, BMe/BMP280 5V NEO-6M-7M-GPS 5V"
+
+#include "iBUSTelemetry.h" https://github.com/SoluTekSteam/75_IbusTelemetry_adis1313_iBUSTelemetry-Arduino
 #include <Wire.h>
 #include <BME280I2C.h>          // https://github.com/Seeed-Studio/Grove_BME280
-#include <TinyGPS++.h>
-//#define ALL_SENSORS
+#include <TinyGPS++.h>          // https://github.com/mikalhart/TinyGPSPlus
+
 #define IBUS_PIN 11             // pin RX IBUS (PCINT na Nano)
 iBUSTelemetry telemetry(IBUS_PIN);
 
@@ -22,7 +34,7 @@ uint8_t bmeType = 0;   // 0=none, 1=BMP280, 2=BME280, 3=unknown
 TinyGPSPlus gps;
 
 #define VOLTAGE_PIN A0
-#define VOLTAGE_DIVIDER 23
+#define VOLTAGE_DIVIDER 23.974
 
 #define DEBUG_PIN 10             // podłączony do GND = włącz debug
 #define UPDATE_INTERVAL 500
@@ -49,15 +61,15 @@ void setup()
   telemetry.addSensor(IBUS_MEAS_TYPE_GPS_DIST);    // 0x14 4
   telemetry.addSensor(IBUS_MEAS_TYPE_CMP_HEAD);    // 0x08 5
   telemetry.addSensor(IBUS_MEAS_TYPE_GROUND_SPEED);// 0x13 6
-  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_FULL);	    //0xfd 7
+  //  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_FULL);	    //0xfd 7
   // Czujniki 4B
-  telemetry.addSensor(IBUS_MEAS_TYPE_ALT);         // 0x83 (4B) 8
-  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_LAT);     // 0x80  9
-  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_LON);     // 0x81  10
-  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_ALT);     // 0x82  11
-  telemetry.addSensor(IBUS_MEAS_TYPE_HEADING);     // 0x7d Heading 12
-  telemetry.addSensor(IBUS_MEAS_TYPE_SPE);       // 0x7e Speed km/h 13
-  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_DIST);    // 0x14 14
+  telemetry.addSensor(IBUS_MEAS_TYPE_ALT);         // 0x83 (4B) 7
+  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_LAT);     // 0x80  8
+  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_LON);     // 0x81  9
+  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_ALT);     // 0x82  10
+  telemetry.addSensor(IBUS_MEAS_TYPE_HEADING);     // 0x7d Heading 11
+  telemetry.addSensor(IBUS_MEAS_TYPE_SPE);       // 0x7e Speed km/h 12
+  telemetry.addSensor(IBUS_MEAS_TYPE_GPS_DIST);    // 0x14 13
 
   // --- Initialize BME/BMP sensor with retry limit ---
   const uint8_t maxRetries = 5;
@@ -157,11 +169,11 @@ void updateValues()
     pressure = 0;
   }
 
-  // --- Napięcie ---
+  // --- Voltage ---
   float adc = analogRead(VOLTAGE_PIN);
   float voltage = (adc / 1023.0) * 5.0 * VOLTAGE_DIVIDER;
 
-  // --- GPS i pochodne ---
+  // --- GPS position and values ---
   uint8_t fix = gps.location.isValid() ? 3 : 0;
   uint8_t sats = gps.satellites.value();
   double lat = gps.location.lat();
@@ -171,7 +183,7 @@ void updateValues()
   double speedMps = gps.speed.mps();
   double course = gps.course.deg();
 
-  // Pozycja startowa
+  // Home position
   if (!homeSet && gps.location.isValid()) {
     homeLat = lat;
     homeLon = lon;
@@ -179,32 +191,28 @@ void updateValues()
     homeSet = true;
   }
 
-  // Dystans, kierunek i względna wysokość
+  // Distance, Heading, Relative altitude
   float distance = 0, heading = 0, gpsRelAlt = 0;
   if (homeSet && gps.location.isValid()) {
-    distance = gps.distanceBetween(lat, lon, homeLat, homeLon); // metry
-    heading = gps.courseTo(homeLat, homeLon, lat, lon);         // stopnie
+    distance = gps.distanceBetween(lat, lon, homeLat, homeLon); // meters
+    heading = gps.courseTo(homeLat, homeLon, lat, lon);         // degrees
     gpsRelAlt = gpsAlt - homeAlt;
   }
 
-  // --- TELEMETRIA ---
+  // --- TELEMETRY ---
   telemetry.setSensorValueFP(1, temperature);                 // TEM
   telemetry.setSensorValue(2, (uint16_t)(voltage * 100));     // EXT_V
   telemetry.setSensorValue(3, telemetry.gpsStateValues(fix, sats)); // GPS_STATUS
   telemetry.setSensorValue(4, (uint16_t)distance);             // GPS_DIST
   telemetry.setSensorValue(5, (uint16_t)heading);              // CMP_HEAD
-#ifdef ALL_SENSORS
   telemetry.setSensorValueFP(6, speedMps);                     // GROUND_SPEED
-#endif
-   telemetry.setSensorValueFP(7, relAltitude);                  // ALT (BME280)
+  telemetry.setSensorValueFP(7, relAltitude);                  // ALT (BME280)
   telemetry.setSensorValue(8, lat * 1e7);                      // GPS_LAT
   telemetry.setSensorValue(9, lon * 1e7);                      // GPS_LON
-#ifdef ALL_SENSORS
   telemetry.setSensorValue(10, gpsAlt);                        // GPS_ALT
   telemetry.setSensorValue(11, (uint16_t)course);              // HEADING
   telemetry.setSensorValue(12, (uint16_t)(speedKmph * 100));   // SPEED km/h
-#endif
-  telemetry.setSensorValue(4, (uint16_t)distance);             // GPS_DIST
+  telemetry.setSensorValue(13, (uint16_t)distance);             // GPS_DIST
 
   // --- DEBUG ---
   if (digitalRead(DEBUG_PIN) == LOW) {
