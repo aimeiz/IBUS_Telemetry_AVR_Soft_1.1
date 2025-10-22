@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/IBUS_Telemetry_AVR_Soft_1.1.vcxproj
+/IBUS_Telemetry_AVR_Soft_1.1.vcxproj.filters
+/__vm/Compile.vmps.xml
